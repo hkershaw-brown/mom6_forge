@@ -15,6 +15,15 @@ import cf_xarray
 MPI = None
 rank = lambda: MPI.COMM_WORLD.Get_rank() if MPI else 0
 
+# ESMPy builds each ESMF Grid's coordinate arrays via a ctypes buffer whose size
+# is tracked as a 32-bit signed int (see esmpy.util.esmpyarray.ndarray_from_esmf).
+# Once a single coordinate array's byte length exceeds 2^31 - 1, that size
+# wraps/truncates and esmpy raises an opaque
+# "TypeError: buffer is too small for requested array" deep inside
+# Grid.__init__ -- with no indication that the real cause is grid size. We
+# detect this ahead of time so we can fail with an actionable message instead.
+_ESMF_MAX_COORD_ELEMENTS = (2**31 - 1) // 8  # float64 elements => 268,435,455
+
 from mom6_forge.utils import (
     get_mesh_dimensions,
     cell_area_rad,
@@ -1012,6 +1021,8 @@ def _print_regrid_info(
         "-----------------------------"
     )
 
+    return src_total, dst_total
+
 
 def regrid_dataset_via_xesmf(
     input_dataset,
@@ -1046,7 +1057,7 @@ def regrid_dataset_via_xesmf(
 
     input_dataset = input_dataset.load()
 
-    _print_regrid_info(
+    src_total, dst_total = _print_regrid_info(
         input_dataset,
         output_dataset,
         method=regridding_method,
@@ -1055,6 +1066,23 @@ def regrid_dataset_via_xesmf(
         periodic=periodic,
         locstream_out=locstream_out,
     )
+
+    for grid_name, total_points in (
+        ("Source", src_total),
+        ("Destination", dst_total),
+    ):
+        if total_points > _ESMF_MAX_COORD_ELEMENTS:
+            raise ValueError(
+                f"{grid_name} grid has {total_points:,} points, which exceeds "
+                f"ESMPy's ~2 GiB ctypes coordinate-buffer limit "
+                f"({_ESMF_MAX_COORD_ELEMENTS:,} points at float64). Building the "
+                f"ESMF Grid in-process (xe.Regridder) would fail with a cryptic "
+                f"'TypeError: buffer is too small for requested array' deep "
+                f"inside esmpy. Coarsen or further slice the {grid_name.lower()} "
+                f"dataset before regridding, or regrid this grid via the external "
+                f"ESMF_Regrid MPI executable instead (see "
+                f"Topo.mpi_set_depth_from_xesmf() for the bathymetry workflow)."
+            )
 
     if not reuse_weights:
         print(

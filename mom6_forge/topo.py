@@ -15,6 +15,7 @@ from pathlib import Path
 from mom6_forge.edit_command import *
 from mom6_forge.command_manager import TopoCommandManager, CommandType
 from mom6_forge.mapping import (
+    _ESMF_MAX_COORD_ELEMENTS,
     regrid_dataset_via_xesmf,
     regrid_with_subsampling,
     regrid_dataset_via_cressman,
@@ -993,6 +994,14 @@ class Topo:
         ratio_median = median_dx_m / dataset_dx_m
         ratio_max = max_dx_m / dataset_dx_m
 
+        # --- Sliced source grid size vs. ESMPy's ctypes coordinate-buffer limit ---
+        # This is the same (nj, ni) shape that will be handed to xe.Regridder if
+        # a direct xesmf regrid is used, so we can flag an oversized source grid
+        # here -- before any masking/stats work runs -- rather than letting the
+        # user hit a cryptic ctypes TypeError deep inside esmpy later on.
+        src_total_points = len(src.lon) * len(src.lat)
+        exceeds_esmf_limit = src_total_points > _ESMF_MAX_COORD_ELEMENTS
+
         # --- Print ---
         sep = "=" * 58
         print(sep)
@@ -1003,6 +1012,7 @@ class Topo:
         print(f"    dlat = {dlat_deg * 3600:.1f} arcsec  ({dlat_deg:.6f}°)")
         print(f"    dx   ~ {dataset_dx_m:.0f} m)")
         print(f"    dy   ~ {dataset_dy_m:.0f} m")
+        print(f"    sliced grid size = {src_total_points:,} points")
         print(f"\n  Model grid (T-cell spacing):")
         print(f"    median = {median_dx_m / 1000:.2f} km")
         print(f"    min    = {min_dx_m / 1000:.2f} km")
@@ -1024,6 +1034,22 @@ class Topo:
                 f"    Ratio {ratio_median:.1f}x is below the threshold where Cressman"
             )
             print(f"    likely provides benefit over xesmf regridding.")
+        if exceeds_esmf_limit:
+            print(f"\n  ⚠ WARNING: sliced source grid has {src_total_points:,} points,")
+            print(
+                f"    exceeding ESMPy's ~2 GiB ctypes coordinate-buffer limit "
+                f"({_ESMF_MAX_COORD_ELEMENTS:,})."
+            )
+            print(
+                "    set_depth_from_xesmf() / direct_xesmf_regrid() WILL fail with a "
+            )
+            print(
+                "    cryptic 'TypeError: buffer is too small for requested array'. "
+            )
+            print(
+                "    Use mpi_set_depth_from_xesmf() instead, or coarsen the source "
+            )
+            print("    dataset before regridding.")
         print(sep)
         return bool(ratio_median >= CRESSMAN_THRESHOLD)
 
