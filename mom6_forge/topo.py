@@ -1047,9 +1047,12 @@ class Topo:
                 "    cryptic 'TypeError: buffer is too small for requested array'. "
             )
             print(
-                "    Use mpi_set_depth_from_xesmf() instead, or coarsen the source "
+                "    Use mpi_set_depth_from_xesmf() instead, coarsen the source "
             )
-            print("    dataset before regridding.")
+            print(
+                "    dataset before regridding, or shrink the region of scientific "
+            )
+            print("    interest (and/or buffer) to reduce the sliced grid size.")
         print(sep)
         return bool(ratio_median >= CRESSMAN_THRESHOLD)
 
